@@ -3,10 +3,10 @@ Sending and receiving 433/315Mhz signals with low-cost GPIO RF Modules on a Rasp
 """
 
 import logging
-import time
+import utime as time
 from collections import namedtuple
 
-from RPi import GPIO
+from machine import Pin
 
 MAX_CHANGES = 67
 
@@ -33,7 +33,8 @@ class RFDevice:
     def __init__(self, gpio,
                  tx_proto=1, tx_pulselength=None, tx_repeat=10, tx_length=24, rx_tolerance=80):
         """Initialize the RF device."""
-        self.gpio = gpio
+        pin = Pin(gpio, Pin.IN)
+        self.gpio = pin
         self.tx_enabled = False
         self.tx_proto = tx_proto
         if tx_pulselength:
@@ -56,7 +57,6 @@ class RFDevice:
         self.rx_bitlength = None
         self.rx_pulselength = None
 
-        GPIO.setmode(GPIO.BCM)
         _LOGGER.debug("Using GPIO " + str(gpio))
 
     def cleanup(self):
@@ -66,7 +66,6 @@ class RFDevice:
         if self.rx_enabled:
             self.disable_rx()
         _LOGGER.debug("Cleanup")
-        GPIO.cleanup()
 
     def enable_tx(self):
         """Enable TX, set up GPIO."""
@@ -75,7 +74,7 @@ class RFDevice:
             return False
         if not self.tx_enabled:
             self.tx_enabled = True
-            GPIO.setup(self.gpio, GPIO.OUT)
+            self.gpio.init(Pin.OUT)
             _LOGGER.debug("TX enabled")
         return True
 
@@ -83,7 +82,7 @@ class RFDevice:
         """Disable TX, reset GPIO."""
         if self.tx_enabled:
             # set up GPIO pin as input for safety
-            GPIO.setup(self.gpio, GPIO.IN)
+            self.gpio.init(Pin.IN)
             self.tx_enabled = False
             _LOGGER.debug("TX disabled")
         return True
@@ -172,9 +171,9 @@ class RFDevice:
         if not self.tx_enabled:
             _LOGGER.error("TX is not enabled, not sending data")
             return False
-        GPIO.output(self.gpio, GPIO.HIGH)
+        self.gpio.value(1)
         self._sleep((highpulses * self.tx_pulselength) / 1000000)
-        GPIO.output(self.gpio, GPIO.LOW)
+        self.gpio.value(0)
         self._sleep((lowpulses * self.tx_pulselength) / 1000000)
         return True
 
@@ -185,16 +184,15 @@ class RFDevice:
             return False
         if not self.rx_enabled:
             self.rx_enabled = True
-            GPIO.setup(self.gpio, GPIO.IN)
-            GPIO.add_event_detect(self.gpio, GPIO.BOTH)
-            GPIO.add_event_callback(self.gpio, self.rx_callback)
+            self.gpio.init(Pin.IN)
+            self.gpio.irq(self.rx_callback)
             _LOGGER.debug("RX enabled")
         return True
 
     def disable_rx(self):
         """Disable RX, remove GPIO event detection."""
         if self.rx_enabled:
-            GPIO.remove_event_detect(self.gpio)
+            self.gpio.irq()
             self.rx_enabled = False
             _LOGGER.debug("RX disabled")
         return True
@@ -202,8 +200,8 @@ class RFDevice:
     # pylint: disable=unused-argument
     def rx_callback(self, gpio):
         """RX callback for GPIO event detection. Handle basic signal detection."""
-        timestamp = int(time.perf_counter() * 1000000)
-        duration = timestamp - self._rx_last_timestamp
+        timestamp = time.ticks_us()
+        duration = time.tick_diff(timestamp - self._rx_last_timestamp)
 
         if duration > 5000:
             if abs(duration - self._rx_timings[0]) < 200:
@@ -252,7 +250,7 @@ class RFDevice:
         return False
            
     def _sleep(self, delay):      
-        _delay = delay / 100
-        end = time.time() + delay - _delay
-        while time.time() < end:
-            time.sleep(_delay)
+        # _delay = delay / 100
+        # end = time.time() + delay - _delay
+        # while time.time() < end:
+        time.sleep(delay)
